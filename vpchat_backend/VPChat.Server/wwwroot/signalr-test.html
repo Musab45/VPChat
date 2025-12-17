@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VPChat SignalR Test Client</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .connected { background: #d4edda; color: #155724; }
+        .disconnected { background: #f8d7da; color: #721c24; }
+        input, button {
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        input { width: 300px; }
+        button {
+            background: #007bff;
+            color: white;
+            cursor: pointer;
+            border: none;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .messages {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin: 10px 0;
+            background: #fafafa;
+            border-radius: 4px;
+        }
+        .message {
+            padding: 8px;
+            margin: 5px 0;
+            background: white;
+            border-left: 3px solid #007bff;
+            border-radius: 4px;
+        }
+        .message.sent { border-left-color: #28a745; }
+        .message.received { border-left-color: #007bff; }
+        .message .time {
+            color: #666;
+            font-size: 12px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 VPChat SignalR Test Client</h1>
+        
+        <div id="connectionStatus" class="status disconnected">
+            ❌ Disconnected
+        </div>
+
+        <!-- Login Section -->
+        <div class="section">
+            <h3>1. Login</h3>
+            <input type="text" id="username" placeholder="Username (e.g., dev)" value="dev">
+            <input type="password" id="password" placeholder="Password" value="password">
+            <button onclick="login()">Login</button>
+            <div id="loginResult"></div>
+        </div>
+
+        <!-- Connect Section -->
+        <div class="section">
+            <h3>2. Connect to SignalR</h3>
+            <button onclick="connectSignalR()" id="connectBtn" disabled>Connect to Chat</button>
+            <button onclick="disconnectSignalR()" id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+
+        <!-- Join Chat Section -->
+        <div class="section">
+            <h3>3. Join Chat Room</h3>
+            <input type="number" id="chatId" placeholder="Chat ID (e.g., 2)" value="2">
+            <button onclick="joinChat()" id="joinBtn" disabled>Join Chat</button>
+            <button onclick="leaveChat()" id="leaveBtn" disabled>Leave Chat</button>
+        </div>
+
+        <!-- Messages Section -->
+        <div class="section">
+            <h3>4. Send Message</h3>
+            <div class="messages" id="messages"></div>
+            <input type="text" id="messageText" placeholder="Type your message..." onkeypress="if(event.key==='Enter') sendMessage()">
+            <button onclick="sendMessage()" id="sendBtn" disabled>Send Message</button>
+        </div>
+
+        <!-- Events Log -->
+        <div class="section">
+            <h3>📋 Events Log</h3>
+            <div class="messages" id="eventsLog"></div>
+        </div>
+    </div>
+
+    <script>
+        let connection = null;
+        let jwtToken = null;
+        let currentChatId = null;
+        let currentUserId = null;
+
+        // Login to get JWT token
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            try {
+                const response = await fetch('http://localhost:5014/api/Auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    jwtToken = data.token;
+                    currentUserId = data.user.id;
+                    document.getElementById('loginResult').innerHTML = 
+                        `✅ Logged in as <strong>${data.user.username}</strong> (ID: ${data.user.id})`;
+                    document.getElementById('connectBtn').disabled = false;
+                    logEvent(`Logged in as ${data.user.username}`, 'success');
+                } else {
+                    const error = await response.json();
+                    document.getElementById('loginResult').innerHTML = 
+                        `❌ Login failed: ${error.message || 'Unknown error'}`;
+                    logEvent(`Login failed: ${error.message}`, 'error');
+                }
+            } catch (error) {
+                document.getElementById('loginResult').innerHTML = `❌ Error: ${error.message}`;
+                logEvent(`Login error: ${error.message}`, 'error');
+            }
+        }
+
+        // Connect to SignalR Hub
+        async function connectSignalR() {
+            if (!jwtToken) {
+                alert('Please login first!');
+                return;
+            }
+
+            connection = new signalR.HubConnectionBuilder()
+                .withUrl("http://localhost:5014/chatHub", {
+                    accessTokenFactory: () => jwtToken
+                })
+                .withAutomaticReconnect()
+                .configureLogging(signalR.LogLevel.Information)
+                .build();
+
+            // Event handlers
+            connection.on("ReceiveMessage", (message) => {
+                displayMessage(message, 'received');
+                logEvent(`Message received from ${message.sender.username}: ${message.content}`, 'info');
+            });
+
+            connection.on("UserJoined", (data) => {
+                logEvent(`User ${data.userId} joined chat ${data.chatId}`, 'info');
+            });
+
+            connection.on("UserLeft", (data) => {
+                logEvent(`User ${data.userId} left chat ${data.chatId}`, 'info');
+            });
+
+            connection.on("UserTyping", (data) => {
+                if (data.isTyping) {
+                    logEvent(`User ${data.userId} is typing...`, 'info');
+                }
+            });
+
+            connection.on("MessageRead", (data) => {
+                logEvent(`Message ${data.messageId} read by user ${data.readBy}`, 'info');
+            });
+
+            connection.onreconnecting(() => {
+                updateConnectionStatus(false);
+                logEvent('Reconnecting...', 'warning');
+            });
+
+            connection.onreconnected(() => {
+                updateConnectionStatus(true);
+                logEvent('Reconnected successfully', 'success');
+            });
+
+            connection.onclose(() => {
+                updateConnectionStatus(false);
+                logEvent('Connection closed', 'error');
+            });
+
+            try {
+                await connection.start();
+                updateConnectionStatus(true);
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = false;
+                document.getElementById('joinBtn').disabled = false;
+                logEvent('Connected to SignalR Hub', 'success');
+            } catch (error) {
+                console.error('Connection failed:', error);
+                logEvent(`Connection failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Disconnect from SignalR
+        async function disconnectSignalR() {
+            if (connection) {
+                await connection.stop();
+                updateConnectionStatus(false);
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = true;
+                document.getElementById('joinBtn').disabled = true;
+                document.getElementById('sendBtn').disabled = true;
+                logEvent('Disconnected from SignalR', 'info');
+            }
+        }
+
+        // Join a chat room
+        async function joinChat() {
+            currentChatId = parseInt(document.getElementById('chatId').value);
+            
+            try {
+                await connection.invoke("JoinChat", currentChatId);
+                document.getElementById('sendBtn').disabled = false;
+                document.getElementById('leaveBtn').disabled = false;
+                logEvent(`Joined chat room ${currentChatId}`, 'success');
+                
+                // Load chat history via REST API
+                await loadChatHistory(currentChatId);
+            } catch (error) {
+                logEvent(`Failed to join chat: ${error.message}`, 'error');
+            }
+        }
+
+        // Leave chat room
+        async function leaveChat() {
+            if (currentChatId) {
+                try {
+                    await connection.invoke("LeaveChat", currentChatId);
+                    document.getElementById('sendBtn').disabled = true;
+                    document.getElementById('leaveBtn').disabled = true;
+                    logEvent(`Left chat room ${currentChatId}`, 'info');
+                    currentChatId = null;
+                } catch (error) {
+                    logEvent(`Failed to leave chat: ${error.message}`, 'error');
+                }
+            }
+        }
+
+        // Send message via SignalR
+        async function sendMessage() {
+            const messageText = document.getElementById('messageText').value;
+            if (!messageText || !currentChatId) return;
+
+            try {
+                await connection.invoke("SendMessage", currentChatId, messageText, 0);
+                document.getElementById('messageText').value = '';
+                logEvent('Message sent', 'success');
+            } catch (error) {
+                logEvent(`Failed to send message: ${error.message}`, 'error');
+            }
+        }
+
+        // Load chat history via REST API
+        async function loadChatHistory(chatId) {
+            try {
+                const response = await fetch(`http://localhost:5014/api/Message/chat/${chatId}?page=1&pageSize=20`, {
+                    headers: {
+                        'Authorization': `Bearer ${jwtToken}`
+                    }
+                });
+
+                if (response.ok) {
+                    const messages = await response.json();
+                    document.getElementById('messages').innerHTML = '';
+                    messages.reverse().forEach(msg => displayMessage(msg, 'history'));
+                    logEvent(`Loaded ${messages.length} messages from history`, 'info');
+                }
+            } catch (error) {
+                logEvent(`Failed to load history: ${error.message}`, 'error');
+            }
+        }
+
+        // Display message in UI
+        function displayMessage(message, type) {
+            const messagesDiv = document.getElementById('messages');
+            const messageElement = document.createElement('div');
+            messageElement.className = `message ${type}`;
+            
+            const isMine = message.sender.id === currentUserId;
+            const timeStr = new Date(message.sentAt).toLocaleTimeString();
+            
+            messageElement.innerHTML = `
+                <strong>${isMine ? 'You' : message.sender.username}</strong>
+                <div>${message.content}</div>
+                <div class="time">${timeStr}</div>
+            `;
+            
+            messagesDiv.appendChild(messageElement);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        // Log events
+        function logEvent(message, type) {
+            const log = document.getElementById('eventsLog');
+            const entry = document.createElement('div');
+            entry.className = 'message';
+            const emoji = type === 'success' ? '✅' : type === 'error' ? '❌' : type === 'warning' ? '⚠️' : 'ℹ️';
+            entry.innerHTML = `${emoji} ${new Date().toLocaleTimeString()}: ${message}`;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // Update connection status
+        function updateConnectionStatus(connected) {
+            const statusDiv = document.getElementById('connectionStatus');
+            if (connected) {
+                statusDiv.className = 'status connected';
+                statusDiv.textContent = '✅ Connected to SignalR';
+            } else {
+                statusDiv.className = 'status disconnected';
+                statusDiv.textContent = '❌ Disconnected';
+            }
+        }
+    </script>
+</body>
+</html>

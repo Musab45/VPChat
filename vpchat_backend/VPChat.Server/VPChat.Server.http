@@ -1,0 +1,32 @@
+@VPChat.Server_HostAddress = http://localhost:5014
+
+GET {{VPChat.Server_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
+
+POST {{VPChat.Server_HostAddress}}/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "password": "password123"
+}
+
+###
+
+POST {{VPChat.Server_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "password": "password123"
+}
+
+###
+
+GET {{VPChat.Server_HostAddress}}/api/test/me
+Accept: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+###
