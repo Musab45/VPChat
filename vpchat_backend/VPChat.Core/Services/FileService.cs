@@ -16,7 +16,7 @@ public class FileService : IFileService
     
     // Allowed file types
     private static readonly string[] ALLOWED_IMAGE_TYPES = { "image/jpeg", "image/png", "image/gif", "image/webp" };
-    private static readonly string[] ALLOWED_AUDIO_TYPES = { "audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/webm" };
+    private static readonly string[] ALLOWED_AUDIO_TYPES = { "audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/webm", "audio/mp4", "audio/x-m4a", "audio/aac", "audio/m4a" };
     private static readonly string[] ALLOWED_VIDEO_TYPES = { "video/mp4", "video/webm", "video/ogg" };
     private static readonly string[] ALLOWED_FILE_TYPES = { 
         "application/pdf", 

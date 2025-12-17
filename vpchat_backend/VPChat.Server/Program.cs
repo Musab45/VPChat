@@ -138,11 +138,7 @@ builder.Services.AddCors(options =>
     // Named policy for SignalR (requires credentials)
     options.AddPolicy("SignalRPolicy", policy =>
     {
-        policy.WithOrigins(
-                  "http://localhost:3000", 
-                  "http://localhost:5173", 
-                  "http://localhost:4200",
-                  "http://172.16.18.96:5014") // Your Mac's IP
+        policy.SetIsOriginAllowed(_ => true) // Allow all origins for mobile development
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials(); // Required for SignalR

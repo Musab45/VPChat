@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("VPChat.Data")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+822a6e0b8669ec833831fa12e9f6fa78d4b8ce62")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+42886015d6c944c2ae535eba379a804e8962f92c")]
 [assembly: System.Reflection.AssemblyProductAttribute("VPChat.Data")]
 [assembly: System.Reflection.AssemblyTitleAttribute("VPChat.Data")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
