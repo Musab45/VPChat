@@ -50,4 +50,25 @@ class Chat {
     );
     return otherUser.username;
   }
+
+  /// Create a copy with updated fields
+  Chat copyWith({
+    int? id,
+    ChatType? type,
+    String? name,
+    DateTime? createdAt,
+    bool? isActive,
+    List<User>? participants,
+    Message? lastMessage,
+  }) {
+    return Chat(
+      id: id ?? this.id,
+      type: type ?? this.type,
+      name: name ?? this.name,
+      createdAt: createdAt ?? this.createdAt,
+      isActive: isActive ?? this.isActive,
+      participants: participants ?? this.participants,
+      lastMessage: lastMessage ?? this.lastMessage,
+    );
+  }
 }

@@ -5,21 +5,32 @@ import '../models/user.dart';
 import '../services/api_service.dart';
 import '../services/signalr_service.dart';
 import '../services/connectivity_service.dart';
+import '../services/offline_queue_service.dart';
 import '../config/api_config.dart';
 
 class ChatProvider with ChangeNotifier {
   final ApiService _apiService = ApiService();
   final SignalRService _signalRService = SignalRService();
   final ConnectivityService _connectivityService = ConnectivityService();
+  final OfflineQueueService _offlineQueueService = OfflineQueueService();
 
   List<Chat> _chats = [];
-  Map<int, List<Message>> _messagesByChat = {};
-  Map<int, bool> _typingUsers = {};
-  Map<int, int> _currentPageByChat = {}; // Track current page for each chat
-  Map<int, bool> _hasMoreMessagesByChat =
+  final Map<int, List<Message>> _messagesByChat = {};
+  final Map<int, bool> _typingUsers = {};
+  final Map<int, int> _currentPageByChat =
+      {}; // Track current page for each chat
+  final Map<int, bool> _hasMoreMessagesByChat =
       {}; // Track if there are more messages to load
-  Map<int, bool> _isLoadingMoreMessages =
+  final Map<int, bool> _isLoadingMoreMessages =
       {}; // Track loading state for pagination
+  final Map<int, int> _unreadCountByChat =
+      {}; // Track unread message count per chat
+  final Map<int, DateTime?> _mutedChats =
+      {}; // Track muted chats (null = forever, DateTime = until)
+  final Map<int, Message?> _replyingTo =
+      {}; // Track message being replied to per chat
+  int? _currentOpenChatId; // Track which chat is currently open
+  int? _currentUserId; // Track current user to exclude own messages from unread
 
   bool _isConnected = false;
   bool _isLoading = false;
@@ -44,6 +55,62 @@ class ChatProvider with ChangeNotifier {
   bool isLoadingMoreMessages(int chatId) =>
       _isLoadingMoreMessages[chatId] ?? false;
 
+  // Unread count methods
+  int getUnreadCount(int chatId) => _unreadCountByChat[chatId] ?? 0;
+  int get totalUnreadCount =>
+      _unreadCountByChat.values.fold(0, (sum, count) => sum + count);
+  bool hasUnreadMessages(int chatId) => getUnreadCount(chatId) > 0;
+
+  // Muting methods
+  bool isChatMuted(int chatId) {
+    final mutedUntil = _mutedChats[chatId];
+    if (mutedUntil == null && !_mutedChats.containsKey(chatId)) return false;
+    if (mutedUntil == null) return true; // Muted forever
+    return DateTime.now().isBefore(mutedUntil);
+  }
+
+  DateTime? getMutedUntil(int chatId) => _mutedChats[chatId];
+
+  void muteChat(int chatId, {Duration? duration}) {
+    if (duration != null) {
+      _mutedChats[chatId] = DateTime.now().add(duration);
+    } else {
+      _mutedChats[chatId] = null; // Muted forever
+    }
+    notifyListeners();
+  }
+
+  void unmuteChat(int chatId) {
+    _mutedChats.remove(chatId);
+    notifyListeners();
+  }
+
+  // Reply methods
+  Message? getReplyingTo(int chatId) => _replyingTo[chatId];
+
+  void setReplyingTo(int chatId, Message? message) {
+    _replyingTo[chatId] = message;
+    notifyListeners();
+  }
+
+  void clearReplyingTo(int chatId) {
+    _replyingTo.remove(chatId);
+    notifyListeners();
+  }
+
+  // Set current open chat (to not count messages as unread when chat is open)
+  void setCurrentOpenChat(int? chatId) {
+    _currentOpenChatId = chatId;
+    if (chatId != null && _unreadCountByChat[chatId] != 0) {
+      // Clear unread count when opening a chat
+      _unreadCountByChat[chatId] = 0;
+      // Defer notification to avoid calling during build
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        notifyListeners();
+      });
+    }
+  }
+
   void _notifyListeners() {
     // Use addPostFrameCallback to avoid calling notifyListeners during build
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -52,6 +119,9 @@ class ChatProvider with ChangeNotifier {
   }
 
   Future<void> initialize(String token, User user) async {
+    // Store current user ID for unread count logic
+    _currentUserId = user.id;
+
     // Initialize connectivity service
     await _connectivityService.initialize();
     _isOnline = _connectivityService.isOnline;
@@ -94,6 +164,9 @@ class ChatProvider with ChangeNotifier {
             await _signalRService.joinChat(chatId);
           }
         }
+
+        // Send any queued messages
+        await sendQueuedMessages();
 
         _isReconnecting = false;
         notifyListeners();
@@ -213,12 +286,38 @@ class ChatProvider with ChangeNotifier {
 
       _chats = await _apiService.getMyChats();
 
+      // Initialize unread counts for chats that have messages
+      // In a real app, this would come from the backend API
+      for (final chat in _chats) {
+        if (!_unreadCountByChat.containsKey(chat.id)) {
+          // Only initialize if we haven't tracked this chat yet
+          // Set to 0 by default - real unread counts should come from backend
+          _unreadCountByChat[chat.id] = 0;
+        }
+      }
+
       _isLoading = false;
       _notifyListeners();
     } catch (e) {
       _error = e.toString();
       _isLoading = false;
       _notifyListeners();
+    }
+  }
+
+  /// Manually increment unread count (for testing or when receiving push notifications)
+  void incrementUnreadCount(int chatId, {int count = 1}) {
+    if (_currentOpenChatId != chatId) {
+      _unreadCountByChat[chatId] = (_unreadCountByChat[chatId] ?? 0) + count;
+      notifyListeners();
+    }
+  }
+
+  /// Clear unread count for a specific chat
+  void clearUnreadCount(int chatId) {
+    if (_unreadCountByChat[chatId] != 0) {
+      _unreadCountByChat[chatId] = 0;
+      notifyListeners();
     }
   }
 
@@ -296,15 +395,75 @@ class ChatProvider with ChangeNotifier {
       if (_isConnected) {
         // Send via SignalR (real-time)
         await _signalRService.sendMessage(chatId, content);
-      } else {
-        // Fallback to REST API
+      } else if (_isOnline) {
+        // Fallback to REST API if SignalR is down but we have internet
         final message = await _apiService.sendMessage(chatId, content);
         _handleMessageReceived(message);
+      } else {
+        // Queue message for later when offline
+        final queuedMessage = QueuedMessage(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          chatId: chatId,
+          content: content,
+          queuedAt: DateTime.now(),
+        );
+        await _offlineQueueService.queueMessage(queuedMessage);
+
+        // Show optimistic message in UI
+        // Note: This is a placeholder - in production you'd create a proper pending message
+        _error = null;
+        notifyListeners();
       }
     } catch (e) {
+      // If sending fails, queue the message
+      if (!_isOnline) {
+        final queuedMessage = QueuedMessage(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          chatId: chatId,
+          content: content,
+          queuedAt: DateTime.now(),
+        );
+        await _offlineQueueService.queueMessage(queuedMessage);
+      }
       _error = 'Failed to send message: $e';
       notifyListeners();
     }
+  }
+
+  /// Send all queued messages when back online
+  Future<void> sendQueuedMessages() async {
+    if (!_isOnline || !_isConnected) return;
+
+    final queuedMessages = await _offlineQueueService.getQueuedMessages();
+    for (final queuedMessage in queuedMessages) {
+      try {
+        if (_isConnected) {
+          await _signalRService.sendMessage(
+            queuedMessage.chatId,
+            queuedMessage.content,
+          );
+        } else {
+          await _apiService.sendMessage(
+            queuedMessage.chatId,
+            queuedMessage.content,
+          );
+        }
+        await _offlineQueueService.removeFromQueue(queuedMessage.id);
+      } catch (e) {
+        // If still failing, increment retry count
+        if (queuedMessage.retryCount < 3) {
+          await _offlineQueueService.removeFromQueue(queuedMessage.id);
+          await _offlineQueueService.queueMessage(
+            queuedMessage.copyWith(retryCount: queuedMessage.retryCount + 1),
+          );
+        }
+      }
+    }
+  }
+
+  /// Get count of pending messages in queue
+  Future<int> getPendingMessageCount() async {
+    return await _offlineQueueService.getQueueCount();
   }
 
   void sendTypingIndicator(int chatId, bool isTyping) {
@@ -345,12 +504,30 @@ class ChatProvider with ChangeNotifier {
     }
     _messagesByChat[message.chatId]!.add(message);
 
-    // Update last message in chat list
+    // Update last message in chat list and move to top
     final chatIndex = _chats.indexWhere((c) => c.id == message.chatId);
     if (chatIndex != -1) {
-      // Move chat to top
-      final chat = _chats.removeAt(chatIndex);
-      _chats.insert(0, chat);
+      final oldChat = _chats.removeAt(chatIndex);
+      // Create updated chat with new last message
+      final updatedChat = Chat(
+        id: oldChat.id,
+        type: oldChat.type,
+        name: oldChat.name,
+        createdAt: oldChat.createdAt,
+        isActive: oldChat.isActive,
+        participants: oldChat.participants,
+        lastMessage: message,
+      );
+      _chats.insert(0, updatedChat);
+    }
+
+    // Update unread count if:
+    // 1. This chat is not currently open
+    // 2. The message is not from the current user
+    final isOwnMessage = message.sender.id == _currentUserId;
+    if (_currentOpenChatId != message.chatId && !isOwnMessage) {
+      _unreadCountByChat[message.chatId] =
+          (_unreadCountByChat[message.chatId] ?? 0) + 1;
     }
 
     notifyListeners();

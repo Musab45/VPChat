@@ -584,6 +584,12 @@ class ApiService {
         return MediaType('audio', 'mpeg');
       case 'wav':
         return MediaType('audio', 'wav');
+      case 'm4a':
+        return MediaType('audio', 'mp4');
+      case 'aac':
+        return MediaType('audio', 'aac');
+      case 'ogg':
+        return MediaType('audio', 'ogg');
       case 'pdf':
         return MediaType('application', 'pdf');
       case 'doc':

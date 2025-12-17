@@ -1,8 +1,9 @@
 class ApiConfig {
   // Change this to your server URL
-  static const String baseUrl = 'http://127.0.0.1:5014'; // Android emulator
+  // static const String baseUrl = 'http://127.0.0.1:5014'; // Android emulator
   // static const String baseUrl = 'http://localhost:5014'; // iOS simulator
-  // static const String baseUrl = 'http://192.168.1.100:5014'; // Physical device
+  static const String baseUrl =
+      'http://172.16.18.96:5014'; // Physical device - your Mac's IP
 
   // REST API Endpoints
   static const String loginUrl = '$baseUrl/api/Auth/login';
